@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import {
   CATEGORIES,
   DURATION_MULTIPLIER,
@@ -10,9 +11,41 @@ import {
 import type { BookingItem, Duration, GuestCount, Treatment } from './types';
 
 const WA_LINK = 'https://wa.me/2348080894549';
+const SPACING = 300;
 
 function formatNaira(n: number) {
   return '₦' + Math.round(n).toLocaleString('en-NG');
+}
+
+function clamp(v: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, v));
+}
+
+function useAnimatedNumber(value: number, duration = 480) {
+  const [display, setDisplay] = useState(value);
+  const prev = useRef(value);
+
+  useEffect(() => {
+    const start = prev.current;
+    const end = value;
+    prev.current = end;
+    if (start === end) {
+      setDisplay(end);
+      return;
+    }
+    const t0 = performance.now();
+    let raf = 0;
+    const step = (now: number) => {
+      const p = Math.min(1, (now - t0) / duration);
+      const eased = 1 - Math.pow(1 - p, 3);
+      setDisplay(start + (end - start) * eased);
+      if (p < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [value, duration]);
+
+  return display;
 }
 
 export default function App() {
@@ -26,34 +59,138 @@ export default function App() {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [preferredTime, setPreferredTime] = useState('Day');
-  const [openAcc, setOpenAcc] = useState<string>('What\'s Included');
+  const [openAcc, setOpenAcc] = useState<string>("What's Included");
 
-  const trackRef = useRef<HTMLDivElement>(null);
-  const dragState = useRef({ dragging: false, startX: 0, scrollStart: 0 });
+  const stageRef = useRef<HTMLDivElement>(null);
+  const cardRefs = useRef<(HTMLElement | null)[]>([]);
+  const posRef = useRef(0);
+  const targetRef = useRef(0);
+  const drag = useRef({ active: false, startX: 0, startPos: 0, moved: 0 });
+  const suppressClick = useRef(false);
 
   const filtered = useMemo(
-    () =>
-      category === 'All'
-        ? TREATMENTS
-        : TREATMENTS.filter((t) => t.category === category),
+    () => (category === 'All' ? TREATMENTS : TREATMENTS.filter((t) => t.category === category)),
     [category]
   );
 
   const selected = TREATMENTS.find((t) => t.id === selectedId) || null;
-
   const price = selected
     ? selected.basePrice * DURATION_MULTIPLIER[duration] * GUEST_MULTIPLIER[guests]
     : 0;
+  const animatedPrice = useAnimatedNumber(price);
 
   const total = booking.reduce((s, b) => s + b.price, 0);
+  const animatedTotal = useAnimatedNumber(total);
+
+  // Apply the real-time 3D curved-wall transforms for every frame.
+  const applyTransforms = () => {
+    const cards = cardRefs.current;
+    for (let i = 0; i < filtered.length; i++) {
+      const el = cards[i];
+      if (!el) continue;
+      const rel = i - posRef.current;
+      const abs = Math.abs(rel);
+      const clampedRel = clamp(rel, -4, 4);
+      const rotY = clamp(-rel * 15, -32, 32);
+      const z = -80 + Math.abs(clampedRel) * 26; // centre recedes deeper into the curve
+      const x = clampedRel * SPACING;
+      const scale = clamp(1 - abs * 0.07, 0.55, 1);
+      const lift = clamp(1 - abs * 0.1, 0.5, 1);
+      el.style.transform = `translate3d(${x}px, 0, ${z}px) rotateY(${rotY}deg) scale(${scale})`;
+      el.style.zIndex = String(200 - Math.round(abs * 20));
+      el.style.filter = `brightness(${lift})`;
+      el.style.boxShadow = `0 ${18 + abs * 10}px ${36 + abs * 14}px rgba(15, 41, 34, ${clamp(
+        0.16 - abs * 0.02,
+        0.03,
+        0.16
+      )})`;
+    }
+  };
+
+  // requestAnimationFrame loop: ease the scroll position toward its target and repaint.
+  useEffect(() => {
+    let raf = 0;
+    const loop = () => {
+      posRef.current += (targetRef.current - posRef.current) * 0.12;
+      applyTransforms();
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered]);
+
+  // Centre the wall whenever the filtered set changes (and on first paint).
+  useLayoutEffect(() => {
+    const centre = filtered.length > 0 ? (filtered.length - 1) / 2 : 0;
+    targetRef.current = centre;
+    posRef.current = centre;
+    applyTransforms();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered]);
+
+  // Horizontal mouse-wheel glide over the stage.
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      if (Math.abs(delta) < 0.5) return;
+      const max = Math.max(0, filtered.length - 1);
+      const next = clamp(targetRef.current + delta / 420, 0, max);
+      if (next !== targetRef.current) {
+        targetRef.current = next;
+        e.preventDefault();
+      }
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [filtered.length]);
+
+  const scrollBy = (dir: number) => {
+    const max = Math.max(0, filtered.length - 1);
+    targetRef.current = clamp(targetRef.current + dir, 0, max);
+  };
+
+  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    drag.current = { active: true, startX: e.clientX, startPos: targetRef.current, moved: 0 };
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      /* noop */
+    }
+  };
+
+  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!drag.current.active) return;
+    const dx = e.clientX - drag.current.startX;
+    drag.current.moved = Math.max(drag.current.moved, Math.abs(dx));
+    const max = Math.max(0, filtered.length - 1);
+    targetRef.current = clamp(drag.current.startPos - dx / SPACING, 0, max);
+  };
+
+  const onPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    drag.current.active = false;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      /* noop */
+    }
+    if (drag.current.moved > 6) {
+      suppressClick.current = true;
+      window.setTimeout(() => {
+        suppressClick.current = false;
+      }, 90);
+    }
+  };
 
   const handleSelect = (t: Treatment) => {
+    if (suppressClick.current) return;
     setSelectedId(t.id);
     setDuration('60 Mins');
     setGuests('Solo Session');
     setAdded(false);
     setOpenAcc("What's Included");
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleAdd = () => {
@@ -92,37 +229,7 @@ export default function App() {
     window.open(url, '_blank', 'noopener');
   };
 
-  // drag handlers
-  const onPointerDown = (e: React.PointerEvent) => {
-    const el = trackRef.current;
-    if (!el) return;
-    dragState.current = { dragging: true, startX: e.clientX, scrollStart: el.scrollLeft };
-    el.setPointerCapture(e.pointerId);
-  };
-  const onPointerMove = (e: React.PointerEvent) => {
-    const el = trackRef.current;
-    if (!el || !dragState.current.dragging) return;
-    const dx = e.clientX - dragState.current.startX;
-    el.scrollLeft = dragState.current.scrollStart - dx;
-  };
-  const onPointerUp = (e: React.PointerEvent) => {
-    const el = trackRef.current;
-    if (!el) return;
-    dragState.current.dragging = false;
-    try {
-      el.releasePointerCapture(e.pointerId);
-    } catch {}
-  };
-
-  const scrollTrack = (dir: number) => {
-    const el = trackRef.current;
-    if (!el) return;
-    el.scrollBy({ left: dir * 320, behavior: 'smooth' });
-  };
-
-  const exploreMore = selected
-    ? TREATMENTS.filter((t) => t.id !== selected.id).slice(0, 3)
-    : [];
+  const ritual = TREATMENTS.filter((t) => t.id !== selected?.id).slice(0, 3);
 
   return (
     <div className="app">
@@ -143,17 +250,18 @@ export default function App() {
 
       <main>
         {!selected && (
-          <section className="gallery-section">
-            <div className="caption-row">
-              <span className="caption">THE SPA GALLERY · WUSE 2, ABUJA</span>
-              <span className="caption">4.8★ · 108 GOOGLE REVIEWS · OPEN 24/7</span>
+          <section className="stage" ref={stageRef}>
+            <div className="stage-bg" aria-hidden="true">
+              <div className="watermark">STELLBEAUTY</div>
+              <div className="spotlight" />
             </div>
-            <h1 className="display">Curated Spa & Wellness Treatments</h1>
-            <p className="lead">
-              Glide through our gallery of restorative treatments, then configure your session in seconds.
-            </p>
 
-            <div className="category-row">
+            <div className="stage-top">
+              <span className="stage-eyebrow">THE SPA GALLERY · WUSE 2, ABUJA</span>
+              <h1 className="stage-title">Step Inside the Curved Gallery</h1>
+            </div>
+
+            <div className="cat-row">
               {CATEGORIES.map((c) => (
                 <button
                   key={c}
@@ -165,91 +273,102 @@ export default function App() {
               ))}
             </div>
 
-            <div className="gallery-wrap">
-              <button className="nav-arrow left" onClick={() => scrollTrack(-1)} aria-label="Previous">
+            <div
+              className="scene"
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onPointerCancel={onPointerUp}
+            >
+              <div className="arc">
+                {filtered.map((t, i) => (
+                  <article
+                    key={t.id}
+                    ref={(el) => {
+                      cardRefs.current[i] = el;
+                    }}
+                    className="frame-card"
+                    onClick={() => handleSelect(t)}
+                  >
+                    <div className="artwork">
+                      <img
+                        src={t.image}
+                        alt={t.title}
+                        width={600}
+                        height={780}
+                        loading="lazy"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
+                      <div className="artwork-fallback" />
+                    </div>
+                    <div className="plate">
+                      <span className="plate-cat">{t.category}</span>
+                      <h3 className="plate-title">{t.title}</h3>
+                      <span className="plate-price">{formatNaira(t.basePrice)}</span>
+                    </div>
+                    <button
+                      className="plate-cta"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSelect(t);
+                      }}
+                    >
+                      Inspect & Configure
+                    </button>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="stage-controls">
+              <button className="glass-arrow" onClick={() => scrollBy(-1)} aria-label="Previous">
                 ‹
               </button>
-              <div
-                className="gallery-track"
-                ref={trackRef}
-                onPointerDown={onPointerDown}
-                onPointerMove={onPointerMove}
-                onPointerUp={onPointerUp}
-                onPointerCancel={onPointerUp}
-              >
-                <div className="gallery-arc">
-                  {filtered.map((t) => (
-                    <article
-                      key={t.id}
-                      className="gallery-card"
-                      onClick={() => handleSelect(t)}
-                    >
-                      <div className="frame">
-                        <img
-                          src={t.image}
-                          alt={t.title}
-                          width={400}
-                          height={520}
-                          loading="lazy"
-                          onError={(e) => {
-                            (e.currentTarget as HTMLImageElement).style.display = 'none';
-                          }}
-                        />
-                        <div className="frame-fallback" />
-                      </div>
-                      <div className="card-meta">
-                        <span className="card-cat">{t.category}</span>
-                        <h3 className="card-title">{t.title}</h3>
-                        <span className="card-price">{formatNaira(t.basePrice)}</span>
-                      </div>
-                      <button
-                        className="inspect-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleSelect(t);
-                        }}
-                      >
-                        Inspect & Configure
-                      </button>
-                    </article>
-                  ))}
-                </div>
-              </div>
-              <button className="nav-arrow right" onClick={() => scrollTrack(1)} aria-label="Next">
+              <span className="caption-pill">DRAG TO EXPLORE GALLERY · TAP ANY TREATMENT TO ZOOM IN</span>
+              <button className="glass-arrow" onClick={() => scrollBy(1)} aria-label="Next">
                 ›
               </button>
             </div>
+
+            <div className="floor" aria-hidden="true" />
           </section>
         )}
 
         {selected && (
-          <section className="configurator">
-            <button className="back-btn" onClick={() => setSelectedId(null)}>
-              ← Back to Gallery
+          <section className="configurator" key={selected.id}>
+            <button className="back-pill" onClick={() => setSelectedId(null)}>
+              ← Back to 3D Gallery
             </button>
+
             <div className="config-grid">
-              <div className="config-image-wrap">
+              <div className="config-photo-col">
                 <div className="config-frame">
                   <img
                     src={selected.image}
                     alt={selected.title}
-                    width={800}
-                    height={960}
+                    width={900}
+                    height={1080}
                     onError={(e) => {
                       (e.currentTarget as HTMLImageElement).style.display = 'none';
                     }}
                   />
-                  <div className="frame-fallback large" />
+                  <div className="artwork-fallback large" />
                 </div>
               </div>
+
               <div className="config-details">
                 <span className="config-cat">{selected.category}</span>
                 <h2 className="config-title">{selected.title}</h2>
-                <div className="config-rating">
+                <div className="config-badge">
                   <span className="stars">4.8★</span>
+                  <span className="dot">·</span>
+                  <span>(108 Reviews)</span>
                   <span className="tag">Open 24/7</span>
                 </div>
-                <div className="config-price">{formatNaira(price)}</div>
+
+                <div className="config-price">{formatNaira(animatedPrice)}</div>
                 <p className="config-desc">{selected.description}</p>
 
                 <div className="option-group">
@@ -282,10 +401,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <button
-                  className={`add-btn ${added ? 'added' : ''}`}
-                  onClick={handleAdd}
-                >
+                <button className={`add-btn ${added ? 'added' : ''}`} onClick={handleAdd}>
                   {added ? 'ADDED TO BOOKING ✓' : 'ADD TO BOOKING'}
                 </button>
 
@@ -293,43 +409,41 @@ export default function App() {
                   {[
                     { key: "What's Included", content: selected.includes.join(' · ') },
                     {
-                      key: 'Private Suite & Hygiene',
+                      key: 'Suite & Hygiene',
                       content:
                         'Private treatment suite, fresh linens, sanitised tools, and single-use disposables for every guest. Hygiene-first protocol maintained 24/7.'
                     },
                     {
-                      key: 'Wuse 2 Location & 24/7 Hours',
+                      key: 'Wuse 2 Location',
                       content:
                         'No. 5 Birao Street, off Yalinga Street, off Adetokunbo Ademola Crescent, Wuse 2, Abuja. Open 24 Hours every day.'
                     }
-                  ].map((a) => (
-                    <div key={a.key} className="acc-item">
-                      <button
-                        className={`acc-header ${openAcc === a.key ? 'open' : ''}`}
-                        onClick={() => setOpenAcc(openAcc === a.key ? '' : a.key)}
-                      >
-                        {a.key}
-                        <span className="acc-icon">{openAcc === a.key ? '−' : '+'}</span>
-                      </button>
-                      {openAcc === a.key && <div className="acc-body">{a.content}</div>}
-                    </div>
-                  ))}
+                  ].map((a) => {
+                    const open = openAcc === a.key;
+                    return (
+                      <div key={a.key} className={`acc-item ${open ? 'open' : ''}`}>
+                        <button className="acc-header" onClick={() => setOpenAcc(open ? '' : a.key)}>
+                          {a.key}
+                          <span className="acc-icon">{open ? '−' : '+'}</span>
+                        </button>
+                        <div className="acc-body">
+                          <div className="acc-body-inner">{a.content}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
 
-            <div className="explore-more">
-              <h3 className="section-title">EXPLORE MORE TREATMENTS</h3>
-              <div className="explore-grid">
-                {exploreMore.map((t) => (
-                  <button
-                    key={t.id}
-                    className="explore-card"
-                    onClick={() => handleSelect(t)}
-                  >
-                    <img src={t.image} alt={t.title} width={300} height={200} loading="lazy" />
-                    <span className="explore-title">{t.title}</span>
-                    <span className="explore-price">{formatNaira(t.basePrice)}</span>
+            <div className="ritual">
+              <h3 className="section-title">COMPLETE YOUR RITUAL</h3>
+              <div className="ritual-grid">
+                {ritual.map((t) => (
+                  <button key={t.id} className="ritual-card" onClick={() => handleSelect(t)}>
+                    <img src={t.image} alt={t.title} width={320} height={220} loading="lazy" />
+                    <span className="ritual-title">{t.title}</span>
+                    <span className="ritual-price">{formatNaira(t.basePrice)}</span>
                   </button>
                 ))}
               </div>
@@ -341,9 +455,18 @@ export default function App() {
           <h3 className="section-title">4.8★ WUSE 2 REVIEWS</h3>
           <div className="reviews-grid">
             {[
-              { name: 'Amina O.', text: 'Best massage in Wuse 2. The hot stone ritual was heavenly and the suite was spotless.' },
-              { name: 'Chidi N.', text: 'Open 24/7 saved me after a late flight. Deep tissue was exactly what I needed.' },
-              { name: 'Fatima B.', text: 'Glass-skin facial left me glowing for days. Lovely staff and serene space.' }
+              {
+                name: 'Amina O.',
+                text: 'Best massage in Wuse 2. The hot stone ritual was heavenly and the suite was spotless.'
+              },
+              {
+                name: 'Chidi N.',
+                text: 'Open 24/7 saved me after a late flight. Deep tissue was exactly what I needed.'
+              },
+              {
+                name: 'Fatima B.',
+                text: 'Glass-skin facial left me glowing for days. Lovely staff and serene space.'
+              }
             ].map((r) => (
               <div key={r.name} className="review-card">
                 <div className="review-stars">★★★★★</div>
@@ -370,7 +493,9 @@ export default function App() {
           <aside className="drawer" onClick={(e) => e.stopPropagation()}>
             <div className="drawer-header">
               <h3>Booking Summary</h3>
-              <button className="drawer-close" onClick={() => setDrawerOpen(false)}>×</button>
+              <button className="drawer-close" onClick={() => setDrawerOpen(false)}>
+                ×
+              </button>
             </div>
             <div className="drawer-body">
               {booking.length === 0 && <p className="empty">No treatments added yet.</p>}
@@ -380,18 +505,22 @@ export default function App() {
                   <div key={b.id} className="drawer-item">
                     <div>
                       <div className="drawer-item-title">{t.title}</div>
-                      <div className="drawer-item-meta">{b.duration} · {b.guests}</div>
+                      <div className="drawer-item-meta">
+                        {b.duration} · {b.guests}
+                      </div>
                     </div>
                     <div className="drawer-item-right">
                       <span>{formatNaira(b.price)}</span>
-                      <button className="remove-btn" onClick={() => handleRemove(b.id)}>×</button>
+                      <button className="remove-btn" onClick={() => handleRemove(b.id)}>
+                        ×
+                      </button>
                     </div>
                   </div>
                 );
               })}
               <div className="drawer-total">
                 <span>Total</span>
-                <span>{formatNaira(total)}</span>
+                <span>{formatNaira(animatedTotal)}</span>
               </div>
 
               <label className="field">
