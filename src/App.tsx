@@ -1,551 +1,476 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
+  BUSINESS,
   CATEGORIES,
+  COUPLE_MULTIPLIER,
   DURATION_MULTIPLIER,
-  DURATIONS,
-  GUEST_MULTIPLIER,
-  GUESTS,
+  MARQUEE_ITEMS,
   TREATMENTS
 } from './data';
-import type { BookingItem, Duration, GuestCount, Treatment } from './types';
+import type { BookingItem, Category, Duration, Treatment } from './types';
 
-const WA_LINK = 'https://wa.me/2348080894549';
-const SPACING = 300;
+type CardState = { duration: Duration; coupleSuite: boolean };
 
-function formatNaira(n: number) {
-  return '₦' + Math.round(n).toLocaleString('en-NG');
+const PHONE_ICON = (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+    <path
+      d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24c1.12.37 2.33.57 3.57.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.4 21 3 13.6 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.24.2 2.45.57 3.57a1 1 0 0 1-.25 1.02l-2.2 2.2Z"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
+const WA_ICON = (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+    <path
+      d="M20 11.5a8.5 8.5 0 0 1-12.65 7.43L4 20l1.2-3.2A8.5 8.5 0 1 1 20 11.5Z"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M9.4 9.3c.2-.5.4-.5.6-.5h.5c.2 0 .4.1.5.4l.7 1.7c.1.2.1.4 0 .6l-.3.4c-.1.2-.1.4 0 .5.4.7 1 1.3 1.7 1.7.2.1.4.1.5 0l.4-.3c.2-.1.4-.1.6 0l1.7.7c.3.1.4.3.4.5v.5c0 .2 0 .4-.5.6-.4.2-1.3.4-2.7-.2-1.6-.7-3.1-2.2-3.8-3.8-.6-1.4-.4-2.3-.3-2.8Z"
+      fill="currentColor"
+    />
+  </svg>
+);
+
+const CLOCK_ICON = (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+    <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.8" />
+    <path d="M12 7.5v4.6l3 1.8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const PIN_ICON = (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">
+    <path
+      d="M12 21s6-5.2 6-10.2A6 6 0 1 0 6 10.8C6 15.8 12 21 12 21Z"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <circle cx="12" cy="10.8" r="2.2" stroke="currentColor" strokeWidth="1.8" />
+  </svg>
+);
+
+function formatNaira(amount: number) {
+  return '₦' + Math.round(amount).toLocaleString('en-NG');
 }
 
-function clamp(v: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, v));
+function calcPrice(basePrice: number, duration: Duration, coupleSuite: boolean) {
+  return basePrice * DURATION_MULTIPLIER[duration] * (coupleSuite ? COUPLE_MULTIPLIER : 1);
 }
 
-function useAnimatedNumber(value: number, duration = 480) {
-  const [display, setDisplay] = useState(value);
-  const prev = useRef(value);
+function getAbujaStatus() {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: BUSINESS.timezone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).formatToParts(new Date());
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
+  const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+  // Open 24 hours daily
+  const open = hour >= 0 && hour <= 23 && minute >= 0;
+  const timeLabel = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} WAT`;
+  return { open, timeLabel };
+}
 
-  useEffect(() => {
-    const start = prev.current;
-    const end = value;
-    prev.current = end;
-    if (start === end) {
-      setDisplay(end);
-      return;
-    }
-    const t0 = performance.now();
-    let raf = 0;
-    const step = (now: number) => {
-      const p = Math.min(1, (now - t0) / duration);
-      const eased = 1 - Math.pow(1 - p, 3);
-      setDisplay(start + (end - start) * eased);
-      if (p < 1) raf = requestAnimationFrame(step);
-    };
-    raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
-  }, [value, duration]);
+function FallbackImage({ className }: { className?: string }) {
+  return <div className={className} aria-hidden="true" />;
+}
 
-  return display;
+function SmartImage({
+  src,
+  alt,
+  className,
+  width,
+  height,
+  loading
+}: {
+  src: string;
+  alt: string;
+  className?: string;
+  width: number;
+  height: number;
+  loading?: 'lazy' | 'eager';
+}) {
+  const [error, setError] = useState(false);
+  if (error) return <FallbackImage className={className} />;
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={className}
+      width={width}
+      height={height}
+      loading={loading}
+      onError={() => setError(true)}
+    />
+  );
+}
+
+function DeckCard({
+  treatment,
+  kicker,
+  index,
+  active,
+  onActivate
+}: {
+  treatment: Treatment;
+  kicker: string;
+  index: number;
+  active: boolean;
+  onActivate: () => void;
+}) {
+  return (
+    <article
+      className={`deck-card ${active ? 'active' : ''}`}
+      style={{ zIndex: active ? 6 : 3 - index }}
+      onClick={onActivate}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onActivate();
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-label={`${treatment.title} highlight card`}
+    >
+      <div className="deck-media">
+        <SmartImage src={treatment.image} alt={treatment.title} width={640} height={480} loading={index === 0 ? 'eager' : 'lazy'} />
+      </div>
+      <div className="deck-body">
+        <div className="deck-kicker">{kicker}</div>
+        <h3 className="deck-title">{treatment.title}</h3>
+        <p className="deck-meta">From {formatNaira(treatment.basePrice)} · {treatment.category}</p>
+      </div>
+    </article>
+  );
 }
 
 export default function App() {
-  const [category, setCategory] = useState<string>('All');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [duration, setDuration] = useState<Duration>('60 Mins');
-  const [guests, setGuests] = useState<GuestCount>('Solo Session');
-  const [added, setAdded] = useState(false);
+  const [category, setCategory] = useState<Category | 'All'>('All');
+  const [cardStates, setCardStates] = useState<Record<string, CardState>>(() => {
+    const initial: Record<string, CardState> = {};
+    for (const t of TREATMENTS) initial[t.id] = { duration: '60 Mins', coupleSuite: false };
+    return initial;
+  });
   const [booking, setBooking] = useState<BookingItem[]>([]);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [preferredTime, setPreferredTime] = useState('Day');
-  const [openAcc, setOpenAcc] = useState<string>("What's Included");
+  const [lastAddedId, setLastAddedId] = useState<string | null>(null);
+  const [filterTick, setFilterTick] = useState(0);
+  const [activeDeck, setActiveDeck] = useState(0);
+  const [status, setStatus] = useState(getAbujaStatus);
 
-  const stageRef = useRef<HTMLDivElement>(null);
-  const cardRefs = useRef<(HTMLElement | null)[]>([]);
-  const posRef = useRef(0);
-  const targetRef = useRef(0);
-  const drag = useRef({ active: false, startX: 0, startPos: 0, moved: 0 });
-  const suppressClick = useRef(false);
+  useEffect(() => {
+    const id = window.setInterval(() => setStatus(getAbujaStatus()), 30000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    if (!lastAddedId) return;
+    const id = window.setTimeout(() => setLastAddedId(null), 1400);
+    return () => window.clearTimeout(id);
+  }, [lastAddedId]);
 
   const filtered = useMemo(
     () => (category === 'All' ? TREATMENTS : TREATMENTS.filter((t) => t.category === category)),
     [category]
   );
 
-  const selected = TREATMENTS.find((t) => t.id === selectedId) || null;
-  const price = selected
-    ? selected.basePrice * DURATION_MULTIPLIER[duration] * GUEST_MULTIPLIER[guests]
-    : 0;
-  const animatedPrice = useAnimatedNumber(price);
+  const total = useMemo(() => booking.reduce((sum, item) => sum + item.price, 0), [booking]);
 
-  const total = booking.reduce((s, b) => s + b.price, 0);
-  const animatedTotal = useAnimatedNumber(total);
+  const heroDeck = useMemo(() => [TREATMENTS[0], TREATMENTS[2], TREATMENTS[5]], []);
 
-  // Apply the real-time 3D curved-wall transforms for every frame.
-  const applyTransforms = () => {
-    const cards = cardRefs.current;
-    for (let i = 0; i < filtered.length; i++) {
-      const el = cards[i];
-      if (!el) continue;
-      const rel = i - posRef.current;
-      const abs = Math.abs(rel);
-      const clampedRel = clamp(rel, -4, 4);
-      const rotY = clamp(-rel * 15, -32, 32);
-      const z = -80 + Math.abs(clampedRel) * 26; // centre recedes deeper into the curve
-      const x = clampedRel * SPACING;
-      const scale = clamp(1 - abs * 0.07, 0.55, 1);
-      const lift = clamp(1 - abs * 0.1, 0.5, 1);
-      el.style.transform = `translate3d(${x}px, 0, ${z}px) rotateY(${rotY}deg) scale(${scale})`;
-      el.style.zIndex = String(200 - Math.round(abs * 20));
-      el.style.filter = `brightness(${lift})`;
-      el.style.boxShadow = `0 ${18 + abs * 10}px ${36 + abs * 14}px rgba(15, 41, 34, ${clamp(
-        0.16 - abs * 0.02,
-        0.03,
-        0.16
-      )})`;
-    }
+  const updateCardState = (id: string, patch: Partial<CardState>) => {
+    setCardStates((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
   };
 
-  // requestAnimationFrame loop: ease the scroll position toward its target and repaint.
-  useEffect(() => {
-    let raf = 0;
-    const loop = () => {
-      posRef.current += (targetRef.current - posRef.current) * 0.12;
-      applyTransforms();
-      raf = requestAnimationFrame(loop);
-    };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtered]);
-
-  // Centre the wall whenever the filtered set changes (and on first paint).
-  useLayoutEffect(() => {
-    const centre = filtered.length > 0 ? (filtered.length - 1) / 2 : 0;
-    targetRef.current = centre;
-    posRef.current = centre;
-    applyTransforms();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtered]);
-
-  // Horizontal mouse-wheel glide over the stage.
-  useEffect(() => {
-    const el = stageRef.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-      if (Math.abs(delta) < 0.5) return;
-      const max = Math.max(0, filtered.length - 1);
-      const next = clamp(targetRef.current + delta / 420, 0, max);
-      if (next !== targetRef.current) {
-        targetRef.current = next;
-        e.preventDefault();
-      }
-    };
-    el.addEventListener('wheel', onWheel, { passive: false });
-    return () => el.removeEventListener('wheel', onWheel);
-  }, [filtered.length]);
-
-  const scrollBy = (dir: number) => {
-    const max = Math.max(0, filtered.length - 1);
-    targetRef.current = clamp(targetRef.current + dir, 0, max);
-  };
-
-  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    drag.current = { active: true, startX: e.clientX, startPos: targetRef.current, moved: 0 };
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {
-      /* noop */
-    }
-  };
-
-  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!drag.current.active) return;
-    const dx = e.clientX - drag.current.startX;
-    drag.current.moved = Math.max(drag.current.moved, Math.abs(dx));
-    const max = Math.max(0, filtered.length - 1);
-    targetRef.current = clamp(drag.current.startPos - dx / SPACING, 0, max);
-  };
-
-  const onPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
-    drag.current.active = false;
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {
-      /* noop */
-    }
-    if (drag.current.moved > 6) {
-      suppressClick.current = true;
-      window.setTimeout(() => {
-        suppressClick.current = false;
-      }, 90);
-    }
-  };
-
-  const handleSelect = (t: Treatment) => {
-    if (suppressClick.current) return;
-    setSelectedId(t.id);
-    setDuration('60 Mins');
-    setGuests('Solo Session');
-    setAdded(false);
-    setOpenAcc("What's Included");
-  };
-
-  const handleAdd = () => {
-    if (!selected) return;
+  const addToBooking = (treatment: Treatment) => {
+    const state = cardStates[treatment.id] ?? { duration: '60 Mins', coupleSuite: false };
+    const price = calcPrice(treatment.basePrice, state.duration, state.coupleSuite);
     const item: BookingItem = {
-      id: `${selected.id}-${Date.now()}`,
-      treatmentId: selected.id,
-      duration,
-      guests,
+      id: `${treatment.id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      treatmentId: treatment.id,
+      duration: state.duration,
+      coupleSuite: state.coupleSuite,
       price,
       addedAt: Date.now()
     };
     setBooking((prev) => [...prev, item]);
-    setAdded(true);
+    setLastAddedId(treatment.id);
   };
 
-  const handleRemove = (id: string) => {
+  const removeBookingItem = (id: string) => {
     setBooking((prev) => prev.filter((b) => b.id !== id));
   };
 
-  const handleWhatsApp = () => {
+  const bookingSummary = useMemo(() => {
+    if (booking.length === 0) return 'Select treatments and tailor duration or Couple’s Suite.';
+    return booking
+      .map((b) => {
+        const t = TREATMENTS.find((x) => x.id === b.treatmentId);
+        if (!t) return null;
+        return `${t.title} (${b.duration}${b.coupleSuite ? ", Couple's Suite" : ''})`;
+      })
+      .filter(Boolean)
+      .join(' · ');
+  }, [booking]);
+
+  const whatsappHref = useMemo(() => {
+    if (booking.length === 0) {
+      return `${BUSINESS.whatsapp}?text=${encodeURIComponent(
+        `Hello ${BUSINESS.name}, I would like to make a booking at your ${BUSINESS.area} sanctuary.`
+      )}`;
+    }
     const lines = [
-      'Hello Stellbeauty Massage Spa, I would like to book the following:',
+      `Hello ${BUSINESS.name}, I would like to book the following:`,
       '',
-      ...booking.map((b) => {
+      ...booking.map((b, i) => {
         const t = TREATMENTS.find((x) => x.id === b.treatmentId)!;
-        return `• ${t.title} — ${b.duration}, ${b.guests} — ${formatNaira(b.price)}`;
+        const suite = b.coupleSuite ? ", Couple's Suite" : '';
+        return `${i + 1}. ${t.title} — ${b.duration}${suite} — ${formatNaira(b.price)}`;
       }),
       '',
       `Total: ${formatNaira(total)}`,
-      `Name: ${name || '-'}`,
-      `Phone: ${phone || '-'}`,
-      `Preferred Time: ${preferredTime}`
+      `Location: ${BUSINESS.address}`
     ];
-    const url = `${WA_LINK}?text=${encodeURIComponent(lines.join('\n'))}`;
-    window.open(url, '_blank', 'noopener');
-  };
+    return `${BUSINESS.whatsapp}?text=${encodeURIComponent(lines.join('\n'))}`;
+  }, [booking, total]);
 
-  const ritual = TREATMENTS.filter((t) => t.id !== selected?.id).slice(0, 3);
+  const onFilterChange = (next: Category | 'All') => {
+    setCategory(next);
+    setFilterTick((t) => t + 1);
+  };
 
   return (
     <div className="app">
-      <header className="header">
-        <div className="header-inner">
-          <div className="brand">STELLBEAUTY</div>
-          <div className="header-right">
-            <span className="badge">4.8★ (108 Reviews)</span>
-            <button className="booking-pill" onClick={() => setDrawerOpen(true)}>
-              Booking ({booking.length})
-            </button>
-            <a className="wa-link" href={WA_LINK} target="_blank" rel="noopener">
-              WhatsApp +234 808 089 4549
+      <header className="topbar">
+        <div className="container topbar-inner">
+          <div className="brand" aria-label={BUSINESS.name}>
+            Stellbeauty <em>Massage & Spa</em>
+          </div>
+          <div className="topbar-actions">
+            <a className="topbar-link" href={BUSINESS.phoneTel}>{BUSINESS.phoneDisplay}</a>
+            <a className="btn btn-secondary" href={BUSINESS.phoneTel} aria-label="Call Stellbeauty">
+              {PHONE_ICON}
+              <span>Call</span>
+            </a>
+            <a className="btn btn-primary" href={whatsappHref} target="_blank" rel="noopener noreferrer" aria-label="Book on WhatsApp">
+              {WA_ICON}
+              <span>WhatsApp Booking</span>
             </a>
           </div>
         </div>
       </header>
 
       <main>
-        {!selected && (
-          <section className="stage" ref={stageRef}>
-            <div className="stage-bg" aria-hidden="true">
-              <div className="watermark">STELLBEAUTY</div>
-              <div className="spotlight" />
+        <section className="hero">
+          <div className="container hero-grid">
+            <div className="hero-copy">
+              <span className="eyebrow">Wuse 2, Abuja · 24-Hour Sanctuary</span>
+              <h1>
+                An editorial ritual of calm, <em>crafted for</em> body and skin.
+              </h1>
+              <p className="hero-lead">
+                {BUSINESS.name} offers unhurried massage, facial, and body therapies in a private Wuse 2 sanctuary.
+                Tailor each session by duration or Couple’s Suite and reserve instantly on WhatsApp.
+              </p>
+              <div className="status-pill" role="status" aria-live="polite">
+                <span className="status-dot" aria-hidden="true" />
+                <span>{status.open ? 'Open now' : 'Closed'} · Abuja (WAT) {status.timeLabel}</span>
+              </div>
+              <div className="hero-meta">
+                <span>{CLOCK_ICON}{BUSINESS.hoursLabel}</span>
+                <span>{PIN_ICON}{BUSINESS.area}</span>
+              </div>
+              <div className="hero-cta">
+                <a className="btn btn-accent" href={whatsappHref} target="_blank" rel="noopener noreferrer">
+                  {WA_ICON}
+                  <span>Book on WhatsApp</span>
+                </a>
+                <a className="btn btn-secondary" href={BUSINESS.phoneTel}>
+                  {PHONE_ICON}
+                  <span>Call {BUSINESS.phoneDisplay}</span>
+                </a>
+              </div>
             </div>
 
-            <div className="stage-top">
-              <span className="stage-eyebrow">THE SPA GALLERY · WUSE 2, ABUJA</span>
-              <h1 className="stage-title">Step Inside the Curved Gallery</h1>
+            <div className="hero-right">
+              <div className="deck" aria-label="Signature treatment highlights">
+                {heroDeck.map((t, i) => (
+                  <DeckCard
+                    key={t.id}
+                    treatment={t}
+                    kicker={i === 0 ? 'Signature Massage' : i === 1 ? 'Radiance Facial' : 'VIP Sanctuary'}
+                    index={i}
+                    active={activeDeck === i}
+                    onActivate={() => setActiveDeck(i)}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <div className="marquee-wrap" aria-label="Signature treatments and sanctuary perks">
+          <div className="marquee">
+            {[0, 1].map((copy) => (
+              <div className="marquee-track" key={copy} aria-hidden={copy === 1}>
+                {MARQUEE_ITEMS.map((item, idx) => (
+                  <span className="marquee-item" key={`${copy}-${idx}`}>{item}</span>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <section className="section" id="services">
+          <div className="container">
+            <div className="section-head">
+              <div>
+                <h2 className="section-title">Curated treatments, <em>priced live</em></h2>
+                <p className="section-sub">
+                  Explore the full {BUSINESS.shortName} service menu. Choose 60 or 90 minutes and add a Couple’s Suite to see your ₦ total update instantly.
+                </p>
+              </div>
             </div>
 
-            <div className="cat-row">
+            <div className="filters" role="tablist" aria-label="Treatment categories">
               {CATEGORIES.map((c) => (
                 <button
                   key={c}
-                  className={`cat-pill ${category === c ? 'active' : ''}`}
-                  onClick={() => setCategory(c)}
+                  type="button"
+                  role="tab"
+                  aria-selected={category === c}
+                  className={`filter-pill ${category === c ? 'active' : ''}`}
+                  onClick={() => onFilterChange(c)}
                 >
                   {c}
                 </button>
               ))}
             </div>
 
-            <div
-              className="scene"
-              onPointerDown={onPointerDown}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-              onPointerCancel={onPointerUp}
-            >
-              <div className="arc">
-                {filtered.map((t, i) => (
-                  <article
-                    key={t.id}
-                    ref={(el) => {
-                      cardRefs.current[i] = el;
-                    }}
-                    className="frame-card"
-                    onClick={() => handleSelect(t)}
-                  >
-                    <div className="artwork">
-                      <img
-                        src={t.image}
-                        alt={t.title}
-                        width={600}
-                        height={780}
-                        loading="lazy"
-                        onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).style.display = 'none';
-                        }}
-                      />
-                      <div className="artwork-fallback" />
+            <div className="services-grid" key={`${category}-${filterTick}`}>
+              {filtered.map((treatment) => {
+                const state = cardStates[treatment.id] ?? { duration: '60 Mins', coupleSuite: false };
+                const livePrice = calcPrice(treatment.basePrice, state.duration, state.coupleSuite);
+                const justAdded = lastAddedId === treatment.id;
+                return (
+                  <article className="service-card enter" key={treatment.id}>
+                    <div className="service-media">
+                      <SmartImage src={treatment.image} alt={treatment.title} width={800} height={600} loading="lazy" />
+                      <span className="service-tag">{treatment.category}</span>
                     </div>
-                    <div className="plate">
-                      <span className="plate-cat">{t.category}</span>
-                      <h3 className="plate-title">{t.title}</h3>
-                      <span className="plate-price">{formatNaira(t.basePrice)}</span>
-                    </div>
-                    <button
-                      className="plate-cta"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleSelect(t);
-                      }}
-                    >
-                      Inspect & Configure
-                    </button>
-                  </article>
-                ))}
-              </div>
-            </div>
+                    <div className="service-body">
+                      <h3 className="service-title">{treatment.title}</h3>
+                      <p className="service-desc">{treatment.description}</p>
+                      <p className="service-includes"><strong>Includes:</strong> {treatment.includes.join(' · ')}</p>
 
-            <div className="stage-controls">
-              <button className="glass-arrow" onClick={() => scrollBy(-1)} aria-label="Previous">
-                ‹
-              </button>
-              <span className="caption-pill">DRAG TO EXPLORE GALLERY · TAP ANY TREATMENT TO ZOOM IN</span>
-              <button className="glass-arrow" onClick={() => scrollBy(1)} aria-label="Next">
-                ›
-              </button>
-            </div>
+                      <div className="service-price-row">
+                        <div className="price">{formatNaira(livePrice)}</div>
+                        <div className="price-note">Live total</div>
+                      </div>
 
-            <div className="floor" aria-hidden="true" />
-          </section>
-        )}
-
-        {selected && (
-          <section className="configurator" key={selected.id}>
-            <button className="back-pill" onClick={() => setSelectedId(null)}>
-              ← Back to 3D Gallery
-            </button>
-
-            <div className="config-grid">
-              <div className="config-photo-col">
-                <div className="config-frame">
-                  <img
-                    src={selected.image}
-                    alt={selected.title}
-                    width={900}
-                    height={1080}
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).style.display = 'none';
-                    }}
-                  />
-                  <div className="artwork-fallback large" />
-                </div>
-              </div>
-
-              <div className="config-details">
-                <span className="config-cat">{selected.category}</span>
-                <h2 className="config-title">{selected.title}</h2>
-                <div className="config-badge">
-                  <span className="stars">4.8★</span>
-                  <span className="dot">·</span>
-                  <span>(108 Reviews)</span>
-                  <span className="tag">Open 24/7</span>
-                </div>
-
-                <div className="config-price">{formatNaira(animatedPrice)}</div>
-                <p className="config-desc">{selected.description}</p>
-
-                <div className="option-group">
-                  <span className="option-label">Session Duration</span>
-                  <div className="pill-row">
-                    {DURATIONS.map((d) => (
-                      <button
-                        key={d}
-                        className={`option-pill ${duration === d ? 'active' : ''}`}
-                        onClick={() => setDuration(d)}
-                      >
-                        {d}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="option-group">
-                  <span className="option-label">Guest Count</span>
-                  <div className="pill-row">
-                    {GUESTS.map((g) => (
-                      <button
-                        key={g}
-                        className={`option-pill ${guests === g ? 'active' : ''}`}
-                        onClick={() => setGuests(g)}
-                      >
-                        {g}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <button className={`add-btn ${added ? 'added' : ''}`} onClick={handleAdd}>
-                  {added ? 'ADDED TO BOOKING ✓' : 'ADD TO BOOKING'}
-                </button>
-
-                <div className="accordion">
-                  {[
-                    { key: "What's Included", content: selected.includes.join(' · ') },
-                    {
-                      key: 'Suite & Hygiene',
-                      content:
-                        'Private treatment suite, fresh linens, sanitised tools, and single-use disposables for every guest. Hygiene-first protocol maintained 24/7.'
-                    },
-                    {
-                      key: 'Wuse 2 Location',
-                      content:
-                        'No. 5 Birao Street, off Yalinga Street, off Adetokunbo Ademola Crescent, Wuse 2, Abuja. Open 24 Hours every day.'
-                    }
-                  ].map((a) => {
-                    const open = openAcc === a.key;
-                    return (
-                      <div key={a.key} className={`acc-item ${open ? 'open' : ''}`}>
-                        <button className="acc-header" onClick={() => setOpenAcc(open ? '' : a.key)}>
-                          {a.key}
-                          <span className="acc-icon">{open ? '−' : '+'}</span>
-                        </button>
-                        <div className="acc-body">
-                          <div className="acc-body-inner">{a.content}</div>
+                      <div className="option-block">
+                        <span className="option-label">Duration / Add-On</span>
+                        <div className="pill-row" role="group" aria-label={`Options for ${treatment.title}`}>
+                          {(['60 Mins', '90 Mins'] as Duration[]).map((d) => (
+                            <button
+                              key={d}
+                              type="button"
+                              className={`option-pill ${state.duration === d ? 'active' : ''}`}
+                              aria-pressed={state.duration === d}
+                              onClick={() => updateCardState(treatment.id, { duration: d })}
+                            >
+                              {d}
+                            </button>
+                          ))}
+                          <button
+                            type="button"
+                            className={`option-pill ${state.coupleSuite ? 'active' : ''}`}
+                            aria-pressed={state.coupleSuite}
+                            onClick={() => updateCardState(treatment.id, { coupleSuite: !state.coupleSuite })}
+                          >
+                            Couple&apos;s Suite
+                          </button>
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
 
-            <div className="ritual">
-              <h3 className="section-title">COMPLETE YOUR RITUAL</h3>
-              <div className="ritual-grid">
-                {ritual.map((t) => (
-                  <button key={t.id} className="ritual-card" onClick={() => handleSelect(t)}>
-                    <img src={t.image} alt={t.title} width={320} height={220} loading="lazy" />
-                    <span className="ritual-title">{t.title}</span>
-                    <span className="ritual-price">{formatNaira(t.basePrice)}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </section>
-        )}
-
-        <section className="reviews-section">
-          <h3 className="section-title">4.8★ WUSE 2 REVIEWS</h3>
-          <div className="reviews-grid">
-            {[
-              {
-                name: 'Amina O.',
-                text: 'Best massage in Wuse 2. The hot stone ritual was heavenly and the suite was spotless.'
-              },
-              {
-                name: 'Chidi N.',
-                text: 'Open 24/7 saved me after a late flight. Deep tissue was exactly what I needed.'
-              },
-              {
-                name: 'Fatima B.',
-                text: 'Glass-skin facial left me glowing for days. Lovely staff and serene space.'
-              }
-            ].map((r) => (
-              <div key={r.name} className="review-card">
-                <div className="review-stars">★★★★★</div>
-                <p className="review-text">“{r.text}”</p>
-                <span className="review-name">— {r.name}</span>
-              </div>
-            ))}
-          </div>
-        </section>
-      </main>
-
-      <footer className="footer">
-        <div className="footer-inner">
-          <div className="footer-brand">STELLBEAUTY MASSAGE SPA</div>
-          <div className="footer-info">
-            <p>No. 5 Birao Street, off Yalinga Street, off Adetokunbo Ademola Crescent, Wuse 2, Abuja</p>
-            <p>Open 24 Hours · +234 808 089 4549</p>
-          </div>
-        </div>
-      </footer>
-
-      {drawerOpen && (
-        <div className="drawer-overlay" onClick={() => setDrawerOpen(false)}>
-          <aside className="drawer" onClick={(e) => e.stopPropagation()}>
-            <div className="drawer-header">
-              <h3>Booking Summary</h3>
-              <button className="drawer-close" onClick={() => setDrawerOpen(false)}>
-                ×
-              </button>
-            </div>
-            <div className="drawer-body">
-              {booking.length === 0 && <p className="empty">No treatments added yet.</p>}
-              {booking.map((b) => {
-                const t = TREATMENTS.find((x) => x.id === b.treatmentId)!;
-                return (
-                  <div key={b.id} className="drawer-item">
-                    <div>
-                      <div className="drawer-item-title">{t.title}</div>
-                      <div className="drawer-item-meta">
-                        {b.duration} · {b.guests}
+                      <div className="service-actions">
+                        <button
+                          type="button"
+                          className={`btn btn-primary btn-small ${justAdded ? 'btn-added' : ''}`}
+                          onClick={() => addToBooking(treatment)}
+                        >
+                          {justAdded ? 'Added to Booking' : 'Add to Booking'}
+                        </button>
                       </div>
                     </div>
-                    <div className="drawer-item-right">
-                      <span>{formatNaira(b.price)}</span>
-                      <button className="remove-btn" onClick={() => handleRemove(b.id)}>
-                        ×
-                      </button>
-                    </div>
-                  </div>
+                  </article>
                 );
               })}
-              <div className="drawer-total">
-                <span>Total</span>
-                <span>{formatNaira(animatedTotal)}</span>
-              </div>
-
-              <label className="field">
-                <span>Name</span>
-                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" />
-              </label>
-              <label className="field">
-                <span>Phone</span>
-                <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+234..." />
-              </label>
-              <label className="field">
-                <span>Preferred Time</span>
-                <select value={preferredTime} onChange={(e) => setPreferredTime(e.target.value)}>
-                  <option>Day</option>
-                  <option>Late-Night 24/7</option>
-                </select>
-              </label>
-
-              <button className="wa-btn" onClick={handleWhatsApp} disabled={booking.length === 0}>
-                Send Booking via WhatsApp
-              </button>
             </div>
-          </aside>
+          </div>
+        </section>
+
+        <div className="booking-bar" aria-label="Booking bar">
+          <div className="container">
+            <div className="booking-bar-inner">
+              <div className="booking-summary">
+                <p className="booking-title">
+                  {booking.length === 0 ? 'Your booking' : `${booking.length} treatment${booking.length > 1 ? 's' : ''} selected`}
+                </p>
+                <p className="booking-detail">{bookingSummary}</p>
+                <div className="booking-total">{formatNaira(total)}</div>
+              </div>
+              <div className="booking-actions">
+                {booking.length > 0 && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => removeBookingItem(booking[booking.length - 1].id)}
+                    aria-label="Remove last selected treatment"
+                  >
+                    Remove Last
+                  </button>
+                )}
+                <a className="btn btn-secondary" href={BUSINESS.phoneTel}>
+                  {PHONE_ICON}
+                  <span>Call</span>
+                </a>
+                <a className="btn btn-accent" href={whatsappHref} target="_blank" rel="noopener noreferrer">
+                  {WA_ICON}
+                  <span>WhatsApp Booking</span>
+                </a>
+              </div>
+            </div>
+          </div>
         </div>
-      )}
+
+        <footer className="footer">
+          <div className="container footer-grid">
+            <div>
+              <h3>{BUSINESS.name}</h3>
+              <p>{BUSINESS.address}</p>
+              <p>{BUSINESS.hoursLabel} · Abuja (WAT)</p>
+              <p>Direct line: <a href={BUSINESS.phoneTel}>{BUSINESS.phoneDisplay}</a></p>
+            </div>
+            <div>
+              <p><strong>Reserve your sanctuary session</strong></p>
+              <p>Message us on <a href={whatsappHref} target="_blank" rel="noopener noreferrer">WhatsApp</a> for instant booking assistance, or call directly for immediate arrangements.</p>
+              <p className="sr-only">Service area: Wuse 2, Abuja, Nigeria.</p>
+            </div>
+          </div>
+        </footer>
+      </main>
     </div>
   );
 }

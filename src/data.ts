@@ -1,5 +1,17 @@
 import type { Treatment } from './types';
 
+export const BUSINESS = {
+  name: 'Stellbeauty Massage & Spa',
+  shortName: 'Stellbeauty',
+  address: 'No. 5 Birao Street, off Yalinga Street, off Adetokunbo Ademola Crescent, Wuse 2, Abuja',
+  phoneDisplay: '+234 808 089 4549',
+  phoneTel: 'tel:+2348080894549',
+  whatsapp: 'https://wa.me/2348080894549',
+  hoursLabel: 'Open 24 Hours · Every Day',
+  area: 'Wuse 2, Abuja',
+  timezone: 'Africa/Lagos'
+};
+
 export const TREATMENTS: Treatment[] = [
   {
     id: 'swedish-deep-tissue',
@@ -9,9 +21,9 @@ export const TREATMENTS: Treatment[] = [
     description:
       'A deeply restorative full-body massage combining long, flowing Swedish strokes with targeted deep-tissue pressure to release tension and restore circulation.',
     image:
-      'https://images.unsplash.com/photo-1544161515-4ab6ce6db874?auto=format&fit=crop&w=1000&q=85',
+      'https://images.unsplash.com/photo-1544161515-4ab6ce6db874?auto=format&fit=crop&w=1200&q=85',
     includes: [
-      '60 / 90 / 120 min session options',
+      '60 / 90 min session options',
       'Aromatherapy oil selection',
       'Hot towel finish',
       'Private suite & fresh linens'
@@ -25,7 +37,7 @@ export const TREATMENTS: Treatment[] = [
     description:
       'Warm basalt stones glide across the body while essential oils calm the mind — a signature ritual for deep relaxation and muscle relief.',
     image:
-      'https://images.unsplash.com/photo-1600334089648-b0d9d3028eb2?auto=format&fit=crop&w=1000&q=85',
+      'https://images.unsplash.com/photo-1600334089648-b0d9d3028eb2?auto=format&fit=crop&w=1200&q=85',
     includes: [
       'Heated volcanic stones',
       'Custom aromatherapy blend',
@@ -41,7 +53,7 @@ export const TREATMENTS: Treatment[] = [
     description:
       'A multi-step hydrating facial using gentle exfoliation, serum layering, and cooling masks for a luminous, glass-skin finish.',
     image:
-      'https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?auto=format&fit=crop&w=1000&q=85',
+      'https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?auto=format&fit=crop&w=1200&q=85',
     includes: [
       'Deep cleanse & gentle peel',
       'Hyaluronic serum infusion',
@@ -57,7 +69,7 @@ export const TREATMENTS: Treatment[] = [
     description:
       'A traditional hammam experience with steam, black-soap cleansing, and a full-body exfoliating scrub for silky, renewed skin.',
     image:
-      'https://images.unsplash.com/photo-1515377905703-c4788e51af15?auto=format&fit=crop&w=1000&q=85',
+      'https://images.unsplash.com/photo-1515377905703-c4788e51af15?auto=format&fit=crop&w=1200&q=85',
     includes: [
       'Steam room session',
       'Black-soap cleanse',
@@ -73,7 +85,7 @@ export const TREATMENTS: Treatment[] = [
     description:
       'Gentle, long-lasting full-body waxing using premium low-temperature wax for smooth, comfortable results.',
     image:
-      'https://images.unsplash.com/photo-1519823551278-64ac92734fb1?auto=format&fit=crop&w=1000&q=85',
+      'https://images.unsplash.com/photo-1519823551278-64ac92734fb1?auto=format&fit=crop&w=1200&q=85',
     includes: [
       'Premium low-temp wax',
       'Soothing post-wax oil',
@@ -89,7 +101,7 @@ export const TREATMENTS: Treatment[] = [
     description:
       'Our flagship Wuse 2 experience: massage, facial, and scrub combined into one unhurried VIP session in a private suite.',
     image:
-      'https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=1000&q=85',
+      'https://images.unsplash.com/photo-1540555700478-4be289fbecef?auto=format&fit=crop&w=1200&q=85',
     includes: [
       'Full-body massage',
       'Luxury facial',
@@ -103,14 +115,19 @@ export const CATEGORIES = ['All', 'Massages', 'Facials', 'Body & Scrubs', 'VIP B
 
 export const DURATION_MULTIPLIER: Record<string, number> = {
   '60 Mins': 1,
-  '90 Mins': 1.4,
-  '120 Mins': 1.8
+  '90 Mins': 1.4
 };
 
-export const GUEST_MULTIPLIER: Record<string, number> = {
-  'Solo Session': 1,
-  'Couples / Duo': 1.85
-};
+export const COUPLE_MULTIPLIER = 1.85;
 
-export const DURATIONS = ['60 Mins', '90 Mins', '120 Mins'] as const;
-export const GUESTS = ['Solo Session', 'Couples / Duo'] as const;
+export const DURATIONS = ['60 Mins', '90 Mins'] as const;
+
+export const MARQUEE_ITEMS = [
+  'Signature Hot Stone Rituals',
+  'Hydrating Glass-Skin Facials',
+  'Moroccan Hammam Scrubs',
+  'Private VIP Suites',
+  'Open 24 Hours in Wuse 2, Abuja',
+  'Immaculate Hygiene Standards',
+  'Couple’s Sanctuary Experiences'
+];
